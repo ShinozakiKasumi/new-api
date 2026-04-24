@@ -11,7 +11,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
 var group2model2channels map[string]map[string][]int // enabled channel
@@ -102,17 +101,41 @@ func GetRandomSatisfiedChannel(group string, model string, retry int) (*Channel,
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()
 
-	// First, try to find channels with the exact model name.
-	channels := group2model2channels[group][model]
-
-	// If no channels found, try to find channels with the normalized model name.
-	if len(channels) == 0 {
-		normalizedModel := ratio_setting.FormatMatchingModelName(model)
-		channels = group2model2channels[group][normalizedModel]
+	var channels []int
+	for _, candidate := range getChannelSelectionModelCandidates(model) {
+		channels = group2model2channels[group][candidate]
+		if len(channels) > 0 {
+			break
+		}
 	}
 
 	if len(channels) == 0 {
 		return nil, nil
+	}
+
+	if IsCodexRoundRobinModel(model) {
+		orderedChannelIDs := append([]int(nil), channels...)
+		sort.Slice(orderedChannelIDs, func(i, j int) bool {
+			left, leftOk := channelsIDM[orderedChannelIDs[i]]
+			right, rightOk := channelsIDM[orderedChannelIDs[j]]
+			if !leftOk || !rightOk {
+				return orderedChannelIDs[i] < orderedChannelIDs[j]
+			}
+			if left.GetPriority() != right.GetPriority() {
+				return left.GetPriority() > right.GetPriority()
+			}
+			return orderedChannelIDs[i] < orderedChannelIDs[j]
+		})
+
+		start := getNextChannelRoundRobinStart(group, model, len(orderedChannelIDs))
+		for i := 0; i < len(orderedChannelIDs); i++ {
+			channelID := orderedChannelIDs[(start+i)%len(orderedChannelIDs)]
+			if channel, ok := channelsIDM[channelID]; ok {
+				return channel, nil
+			}
+			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelID)
+		}
+		return nil, errors.New("channel not found")
 	}
 
 	if len(channels) == 1 {

@@ -104,6 +104,10 @@ func getChannelQuery(group string, model string, retry int) (*gorm.DB, error) {
 }
 
 func GetChannel(group string, model string, retry int) (*Channel, error) {
+	if IsCodexRoundRobinModel(model) {
+		return getCodexRoundRobinChannel(group, model)
+	}
+
 	var abilities []Ability
 
 	var err error = nil
@@ -141,6 +145,42 @@ func GetChannel(group string, model string, retry int) (*Channel, error) {
 	}
 	err = DB.First(&channel, "id = ?", channel.Id).Error
 	return &channel, err
+}
+
+func getCodexRoundRobinChannel(group string, model string) (*Channel, error) {
+	var abilities []Ability
+	for _, candidate := range getChannelSelectionModelCandidates(model) {
+		err := DB.
+			Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, candidate, true).
+			Order("priority DESC, channel_id ASC").
+			Find(&abilities).Error
+		if err != nil {
+			return nil, err
+		}
+		if len(abilities) > 0 {
+			break
+		}
+	}
+
+	if len(abilities) == 0 {
+		return nil, nil
+	}
+
+	start := getNextChannelRoundRobinStart(group, model, len(abilities))
+	for i := 0; i < len(abilities); i++ {
+		channelID := abilities[(start+i)%len(abilities)].ChannelId
+		channel := Channel{}
+		err := DB.Where("id = ? and status = ?", channelID, common.ChannelStatusEnabled).First(&channel).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &channel, nil
+	}
+
+	return nil, nil
 }
 
 func (channel *Channel) AddAbilities(tx *gorm.DB) error {
