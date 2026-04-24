@@ -134,6 +134,20 @@ const MODEL_FETCHABLE_TYPES = new Set([
   1, 4, 14, 34, 17, 26, 27, 24, 47, 25, 20, 23, 31, 40, 42, 48, 43,
 ]);
 
+const CODEX_CHANNEL_TYPE = 57;
+const CODEX_DEFAULT_MODELS = ['gpt-5.5', 'gpt-5.4', 'gpt-5.3-codex'];
+
+const getDefaultChannelModels = (type) =>
+  type === CODEX_CHANNEL_TYPE ? [...CODEX_DEFAULT_MODELS] : getChannelModels(type);
+
+const generateDefaultChannelName = (type) => {
+  const suffix = Math.random().toString(36).slice(2, 8);
+  if (type === CODEX_CHANNEL_TYPE) {
+    return `codex-${suffix}`;
+  }
+  return `channel-${suffix}`;
+};
+
 function type2secretPrompt(type) {
   // inputs.type === 15 ? '按照如下格式输入：APIKey|SecretKey' : (inputs.type === 18 ? '按照如下格式输入：APPID|APISecret|APIKey' : '请输入渠道对应的鉴权密钥')
   switch (type) {
@@ -171,7 +185,7 @@ const EditChannelModal = (props) => {
   };
   const originInputs = {
     name: '',
-    type: 1,
+    type: CODEX_CHANNEL_TYPE,
     key: '',
     openai_organization: '',
     max_input_tokens: 0,
@@ -180,7 +194,7 @@ const EditChannelModal = (props) => {
     model_mapping: '',
     param_override: '',
     status_code_mapping: '',
-    models: [],
+    models: CODEX_DEFAULT_MODELS,
     auto_ban: 1,
     test_model: '',
     groups: ['default'],
@@ -501,7 +515,11 @@ const EditChannelModal = (props) => {
     system_prompt: '',
   });
   const showApiConfigCard = true; // 控制是否显示 API 配置卡片
-  const getInitValues = () => ({ ...originInputs });
+  const getInitValues = () => ({
+    ...originInputs,
+    name: generateDefaultChannelName(originInputs.type),
+    models: getDefaultChannelModels(originInputs.type),
+  });
 
   // 处理渠道额外设置的更新
   const handleChannelSettingsChange = (key, value) => {
@@ -650,23 +668,34 @@ const EditChannelModal = (props) => {
           localModels = ['suno_music', 'suno_lyrics'];
           break;
         case 45:
-          localModels = getChannelModels(value);
+          localModels = getDefaultChannelModels(value);
           setInputs((prevInputs) => ({
             ...prevInputs,
             base_url: 'https://ark.cn-beijing.volces.com',
           }));
           break;
         default:
-          localModels = getChannelModels(value);
+          localModels = getDefaultChannelModels(value);
           break;
       }
-      if (inputs.models.length === 0) {
+      if (!isEdit || inputs.models.length === 0) {
         setInputs((inputs) => ({ ...inputs, models: localModels }));
+        if (formApiRef.current) {
+          formApiRef.current.setValue('models', localModels);
+        }
       }
       setBasicModels(localModels);
 
       // 重置手动输入模式状态
       setUseManualInput(false);
+
+      if (value === CODEX_CHANNEL_TYPE && (!inputs.name || inputs.name.trim() === '')) {
+        const defaultName = generateDefaultChannelName(value);
+        setInputs((prevInputs) => ({ ...prevInputs, name: defaultName }));
+        if (formApiRef.current) {
+          formApiRef.current.setValue('name', defaultName);
+        }
+      }
 
       if (value === 57) {
         setBatch(false);
@@ -683,13 +712,20 @@ const EditChannelModal = (props) => {
     //setAutoBan
   };
 
-  const formatJsonField = (fieldName) => {
-    const rawValue = (inputs?.[fieldName] ?? '').trim();
-    if (!rawValue) return;
+  const formatJsonString = (rawValue) => {
+    const normalized = (rawValue ?? '').trim();
+    if (!normalized) {
+      return '';
+    }
+    return JSON.stringify(JSON.parse(normalized), null, 2);
+  };
+
+  const formatJsonField = (fieldName, rawValue = inputs?.[fieldName] ?? '') => {
+    const normalized = (rawValue ?? '').trim();
+    if (!normalized) return;
 
     try {
-      const parsed = JSON.parse(rawValue);
-      handleInputChange(fieldName, JSON.stringify(parsed, null, 2));
+      handleInputChange(fieldName, formatJsonString(normalized));
     } catch (error) {
       showError(`${t('JSON格式错误')}: ${error.message}`);
     }
@@ -714,12 +750,10 @@ const EditChannelModal = (props) => {
     }
 
     let content = raw;
-    if (verifyJSON(raw)) {
-      try {
-        content = JSON.stringify(JSON.parse(raw), null, 2);
-      } catch (error) {
-        content = raw;
-      }
+    try {
+      content = formatJsonString(raw);
+    } catch (error) {
+      content = raw;
     }
 
     const ok = await copy(content);
@@ -968,7 +1002,7 @@ const EditChannelModal = (props) => {
       }
       // 同步企业账户状态
       setIsEnterpriseAccount(data.is_enterprise_account || false);
-      setBasicModels(getChannelModels(data.type));
+      setBasicModels(getDefaultChannelModels(data.type));
       // 同步更新channelSettings状态显示
       setChannelSettings({
         force_format: data.force_format,
@@ -1210,8 +1244,12 @@ const EditChannelModal = (props) => {
   };
 
   const handleCodexOAuthGenerated = (key) => {
-    handleInputChange('key', key);
-    formatJsonField('key');
+    try {
+      handleInputChange('key', formatJsonString(key));
+    } catch (error) {
+      handleInputChange('key', key);
+      showError(`${t('JSON格式错误')}: ${error.message}`);
+    }
   };
 
   const handleRefreshCodexCredential = async () => {
@@ -1292,13 +1330,12 @@ const EditChannelModal = (props) => {
     fetchGroups().then();
     if (!isEdit) {
       initialBaseUrlRef.current = '';
-      setInputs(originInputs);
+      const nextInputs = getInitValues();
+      setInputs(nextInputs);
       if (formApiRef.current) {
-        formApiRef.current.setValues(originInputs);
+        formApiRef.current.setValues(nextInputs);
       }
-      let localModels = getChannelModels(inputs.type);
-      setBasicModels(localModels);
-      setInputs((inputs) => ({ ...inputs, models: localModels }));
+      setBasicModels(nextInputs.models);
     }
   }, [props.editingChannel.id]);
 
@@ -1314,7 +1351,10 @@ const EditChannelModal = (props) => {
       if (isEdit) {
         loadChannel();
       } else {
-        formApiRef.current?.setValues(getInitValues());
+        const nextInputs = getInitValues();
+        setInputs(nextInputs);
+        setBasicModels(nextInputs.models);
+        formApiRef.current?.setValues(nextInputs);
         try {
           navigator?.clipboard?.readText()?.then((text) => {
             const parsed = parseChannelConnectionString(text);
@@ -1865,7 +1905,7 @@ const EditChannelModal = (props) => {
         showSuccess(t('渠道更新成功！'));
       } else {
         showSuccess(t('渠道创建成功！'));
-        setInputs(originInputs);
+        setInputs(getInitValues());
       }
       props.refresh();
       props.handleClose();
