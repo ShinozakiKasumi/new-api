@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -15,14 +16,14 @@ func formatNotifyType(channelId int, status int) string {
 	return fmt.Sprintf("%s_%d_%d", dto.NotifyTypeChannelUpdate, channelId, status)
 }
 
-// disable & notify
-func DisableChannel(channelError types.ChannelError, reason string) {
+const codexUsageLimitReachedFragment = "the usage limit has been reached"
+
+func disableChannel(channelError types.ChannelError, reason string, force bool) bool {
 	common.SysLog(fmt.Sprintf("通道「%s」（#%d）发生错误，准备禁用，原因：%s", channelError.ChannelName, channelError.ChannelId, reason))
 
-	// 检查是否启用自动禁用功能
-	if !channelError.AutoBan {
+	if !force && !channelError.AutoBan {
 		common.SysLog(fmt.Sprintf("通道「%s」（#%d）未启用自动禁用功能，跳过禁用操作", channelError.ChannelName, channelError.ChannelId))
-		return
+		return false
 	}
 
 	success := model.UpdateChannelStatus(channelError.ChannelId, channelError.UsingKey, common.ChannelStatusAutoDisabled, reason)
@@ -31,6 +32,16 @@ func DisableChannel(channelError types.ChannelError, reason string) {
 		content := fmt.Sprintf("通道「%s」（#%d）已被禁用，原因：%s", channelError.ChannelName, channelError.ChannelId, reason)
 		NotifyRootUser(formatNotifyType(channelError.ChannelId, common.ChannelStatusAutoDisabled), subject, content)
 	}
+	return success
+}
+
+// disable & notify
+func DisableChannel(channelError types.ChannelError, reason string) {
+	disableChannel(channelError, reason, false)
+}
+
+func ForceDisableChannel(channelError types.ChannelError, reason string) bool {
+	return disableChannel(channelError, reason, true)
 }
 
 func EnableChannel(channelId int, usingKey string, channelName string) {
@@ -62,6 +73,42 @@ func ShouldDisableChannel(err *types.NewAPIError) bool {
 	lowerMessage := strings.ToLower(err.Error())
 	search, _ := AcSearch(lowerMessage, operation_setting.AutomaticDisableKeywords, true)
 	return search
+}
+
+func IsCodexUsageLimitExceeded(channelError types.ChannelError, err *types.NewAPIError) bool {
+	if err == nil {
+		return false
+	}
+	if channelError.ChannelType != constant.ChannelTypeCodex {
+		return false
+	}
+	if err.StatusCode != 429 {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), codexUsageLimitReachedFragment)
+}
+
+func HandleCodexUsageLimitExceeded(channelError types.ChannelError, err *types.NewAPIError) int {
+	if !IsCodexUsageLimitExceeded(channelError, err) {
+		return 0
+	}
+
+	reason := err.ErrorWithStatusCode()
+	ForceDisableChannel(channelError, reason)
+
+	channel, getErr := model.CacheGetChannel(channelError.ChannelId)
+	if getErr != nil || channel == nil {
+		channel, _ = model.GetChannelById(channelError.ChannelId, true)
+	}
+	if channel == nil || channel.Status == common.ChannelStatusEnabled {
+		return 0
+	}
+
+	deleted := ClearChannelAffinityCacheByChannelID(channelError.ChannelId)
+	if deleted > 0 {
+		common.SysLog(fmt.Sprintf("Codex 通道 #%d 已清理 %d 条 channel affinity 缓存", channelError.ChannelId, deleted))
+	}
+	return deleted
 }
 
 func ShouldEnableChannel(newAPIError *types.NewAPIError, status int) bool {
