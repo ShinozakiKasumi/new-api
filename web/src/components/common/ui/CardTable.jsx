@@ -27,6 +27,7 @@ import {
   Empty,
   Button,
   Collapsible,
+  Checkbox,
 } from '@douyinfe/semi-ui';
 import { IconChevronDown, IconChevronUp } from '@douyinfe/semi-icons';
 import PropTypes from 'prop-types';
@@ -49,12 +50,62 @@ const CardTable = ({
 }) => {
   const isMobile = useIsMobile();
   const { t } = useTranslation();
+  const [internalSelectedRowKeys, setInternalSelectedRowKeys] = useState([]);
 
   const showSkeleton = useMinimumLoadingTime(loading);
 
   const getRowKey = (record, index) => {
     if (typeof rowKey === 'function') return rowKey(record);
     return record[rowKey] !== undefined ? record[rowKey] : index;
+  };
+
+  const isSameRowKey = (left, right) => String(left) === String(right);
+
+  const flattenRecords = (records) => {
+    const flattened = [];
+    records.forEach((record) => {
+      flattened.push(record);
+      if (Array.isArray(record.children)) {
+        flattened.push(...flattenRecords(record.children));
+      }
+    });
+    return flattened;
+  };
+
+  const rowSelection = tableProps.rowSelection;
+  const selectedRowKeys =
+    rowSelection?.selectedRowKeys ?? internalSelectedRowKeys;
+
+  const getRowCheckboxProps = (record) => {
+    return rowSelection?.getCheckboxProps?.(record) || {};
+  };
+
+  const getSelectedRows = (keys) => {
+    return flattenRecords(dataSource).filter((record, index) => {
+      const checkboxProps = getRowCheckboxProps(record);
+      if (checkboxProps.disabled) {
+        return false;
+      }
+      return keys.some((key) => isSameRowKey(key, getRowKey(record, index)));
+    });
+  };
+
+  const updateRowSelection = (record, index, checked) => {
+    if (!rowSelection) return;
+    if (getRowCheckboxProps(record).disabled) return;
+
+    const rowKeyVal = getRowKey(record, index);
+    const nextSelectedRowKeys = checked
+      ? Array.from(new Set([...selectedRowKeys, rowKeyVal]))
+      : selectedRowKeys.filter((key) => !isSameRowKey(key, rowKeyVal));
+
+    if (!rowSelection.selectedRowKeys) {
+      setInternalSelectedRowKeys(nextSelectedRowKeys);
+    }
+    rowSelection.onChange?.(
+      nextSelectedRowKeys,
+      getSelectedRows(nextSelectedRowKeys),
+    );
   };
 
   if (!isMobile) {
@@ -133,6 +184,8 @@ const CardTable = ({
   const MobileRowCard = ({ record, index }) => {
     const [showDetails, setShowDetails] = useState(false);
     const rowKeyVal = getRowKey(record, index);
+    const checkboxProps = getRowCheckboxProps(record);
+    const checked = selectedRowKeys.some((key) => isSameRowKey(key, rowKeyVal));
 
     const hasDetails =
       tableProps.expandedRowRender &&
@@ -140,6 +193,24 @@ const CardTable = ({
 
     return (
       <Card key={rowKeyVal} className='!rounded-2xl shadow-sm'>
+        {rowSelection && (
+          <div
+            className='flex justify-end pb-2 mb-1 border-b border-dashed'
+            style={{ borderColor: 'var(--semi-color-border)' }}
+          >
+            <Checkbox
+              {...checkboxProps}
+              checked={checked}
+              aria-label={t('选择')}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => {
+                e.stopPropagation();
+                updateRowSelection(record, index, e.target.checked);
+              }}
+            />
+          </div>
+        )}
+
         {columns.map((col, colIdx) => {
           if (
             tableProps?.visibleColumns &&

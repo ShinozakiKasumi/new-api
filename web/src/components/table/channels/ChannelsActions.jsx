@@ -29,7 +29,6 @@ import {
 import CompactModeToggle from '../../common/ui/CompactModeToggle';
 
 const ChannelsActions = ({
-  enableBatchDelete,
   batchDeleteChannels,
   setShowBatchSetTag,
   testAllChannels,
@@ -44,7 +43,7 @@ const ChannelsActions = ({
   setCompactMode,
   idSort,
   setIdSort,
-  setEnableBatchDelete,
+  selectedChannels,
   enableTagMode,
   setEnableTagMode,
   statusFilter,
@@ -58,6 +57,9 @@ const ChannelsActions = ({
   setActivePage,
   t,
 }) => {
+  const selectedChannelCount = selectedChannels.length;
+  const hasSelectedChannels = selectedChannelCount > 0;
+
   return (
     <div className='flex flex-col gap-2'>
       {/* 第一行：批量操作按钮 + 设置开关 */}
@@ -66,23 +68,27 @@ const ChannelsActions = ({
         <div className='flex flex-wrap md:flex-nowrap items-center gap-2 w-full md:w-auto order-2 md:order-1'>
           <Button
             size='small'
-            disabled={!enableBatchDelete}
+            disabled={!hasSelectedChannels}
             type='danger'
             className='w-full md:w-auto'
             onClick={() => {
               Modal.confirm({
-                title: t('确定是否要删除所选通道？'),
+                title: `${t(
+                  '确定是否要删除所选通道？',
+                )} (${selectedChannelCount})`,
                 content: t('此修改将不可逆'),
                 onOk: () => batchDeleteChannels(),
               });
             }}
           >
-            {t('删除所选通道')}
+            {`${t('删除所选通道')}${
+              hasSelectedChannels ? ` (${selectedChannelCount})` : ''
+            }`}
           </Button>
 
           <Button
             size='small'
-            disabled={!enableBatchDelete}
+            disabled={!hasSelectedChannels}
             type='tertiary'
             onClick={() => setShowBatchSetTag(true)}
             className='w-full md:w-auto'
@@ -260,20 +266,6 @@ const ChannelsActions = ({
                     v,
                   );
                 }
-              }}
-            />
-          </div>
-
-          <div className='flex items-center justify-between w-full md:w-auto'>
-            <Typography.Text strong className='mr-2'>
-              {t('开启批量操作')}
-            </Typography.Text>
-            <Switch
-              size='small'
-              checked={enableBatchDelete}
-              onChange={(v) => {
-                localStorage.setItem('enable-batch-delete', v + '');
-                setEnableBatchDelete(v);
               }}
             />
           </div>

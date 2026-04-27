@@ -34,9 +34,9 @@ const ChannelsTable = (channelsData) => {
     activePage,
     pageSize,
     channelCount,
-    enableBatchDelete,
     compactMode,
     visibleColumns,
+    selectedChannels,
     setSelectedChannels,
     handlePageChange,
     handlePageSizeChange,
@@ -131,6 +131,21 @@ const ChannelsTable = (channelsData) => {
       : visibleColumnsList;
   }, [compactMode, visibleColumnsList]);
 
+  const rowSelection = useMemo(
+    () => ({
+      selectedRowKeys: selectedChannels.map((channel) => channel.key),
+      getCheckboxProps: (record) => ({
+        disabled: record.children !== undefined,
+      }),
+      onChange: (selectedRowKeys, selectedRows) => {
+        setSelectedChannels(
+          selectedRows.filter((row) => row.children === undefined),
+        );
+      },
+    }),
+    [selectedChannels, setSelectedChannels],
+  );
+
   return (
     <CardTable
       columns={tableColumns}
@@ -148,15 +163,7 @@ const ChannelsTable = (channelsData) => {
       hidePagination={true}
       expandAllRows={false}
       onRow={handleRow}
-      rowSelection={
-        enableBatchDelete
-          ? {
-              onChange: (selectedRowKeys, selectedRows) => {
-                setSelectedChannels(selectedRows);
-              },
-            }
-          : null
-      }
+      rowSelection={rowSelection}
       empty={
         <Empty
           image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}

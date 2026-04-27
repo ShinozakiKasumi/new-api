@@ -35,6 +35,14 @@ func TestIsCodexUsageLimitExceeded(t *testing.T) {
 	require.False(t, IsCodexUsageLimitExceeded(channelError, otherMessage))
 }
 
+func TestFindUsingKeyIndex(t *testing.T) {
+	keys := []string{"key-a", "key-b", "key-c"}
+
+	require.Equal(t, 1, findUsingKeyIndex(keys, "key-b"))
+	require.Equal(t, -1, findUsingKeyIndex(keys, "key-x"))
+	require.Equal(t, -1, findUsingKeyIndex(keys, ""))
+}
+
 func TestClearChannelAffinityCacheByChannelID(t *testing.T) {
 	cache := getChannelAffinityCache()
 	seed := time.Now().UnixNano()

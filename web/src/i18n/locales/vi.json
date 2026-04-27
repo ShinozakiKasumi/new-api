@@ -4176,6 +4176,8 @@
     "默认折叠侧边栏": "Mặc định thu gọn thanh bên",
     "默认测试模型": "Mô hình kiểm tra mặc định",
     "默认用户消息": "Xin chào",
-    "默认补全倍率": "Tỷ lệ hoàn thành mặc định"
+    "默认补全倍率": "Tỷ lệ hoàn thành mặc định",
+    "429 usage limit 自动删除": "Tự động xóa khi 429 usage limit",
+    "开启后，Codex 渠道触发 usage limit 429 时会自动删除渠道或当前密钥；默认关闭": "Khi bật, kênh Codex gặp usage limit 429 sẽ tự động xóa kênh hoặc khóa hiện tại. Mặc định tắt"
   }
 }

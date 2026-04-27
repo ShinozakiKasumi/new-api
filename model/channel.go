@@ -504,6 +504,67 @@ func (channel *Channel) Update() error {
 	return err
 }
 
+func rebuildMultiKeyMetadataAfterDelete(keys []string, info ChannelInfo, keyIndex int) ([]string, map[int]int, map[int]int64, map[int]string, error) {
+	if keyIndex < 0 || keyIndex >= len(keys) {
+		return nil, nil, nil, nil, errors.New("key index out of range")
+	}
+
+	remainingKeys := make([]string, 0, len(keys)-1)
+	newStatusList := make(map[int]int)
+	newDisabledTime := make(map[int]int64)
+	newDisabledReason := make(map[int]string)
+
+	newIndex := 0
+	for i, key := range keys {
+		if i == keyIndex {
+			continue
+		}
+
+		remainingKeys = append(remainingKeys, key)
+		if info.MultiKeyStatusList != nil {
+			if status, exists := info.MultiKeyStatusList[i]; exists && status != common.ChannelStatusEnabled {
+				newStatusList[newIndex] = status
+			}
+		}
+		if info.MultiKeyDisabledTime != nil {
+			if disabledTime, exists := info.MultiKeyDisabledTime[i]; exists {
+				newDisabledTime[newIndex] = disabledTime
+			}
+		}
+		if info.MultiKeyDisabledReason != nil {
+			if reason, exists := info.MultiKeyDisabledReason[i]; exists {
+				newDisabledReason[newIndex] = reason
+			}
+		}
+		newIndex++
+	}
+
+	if len(remainingKeys) == 0 {
+		return nil, nil, nil, nil, errors.New("cannot delete the last key")
+	}
+
+	return remainingKeys, newStatusList, newDisabledTime, newDisabledReason, nil
+}
+
+func (channel *Channel) DeleteMultiKeyByIndex(keyIndex int) error {
+	keys := channel.GetKeys()
+	remainingKeys, newStatusList, newDisabledTime, newDisabledReason, err := rebuildMultiKeyMetadataAfterDelete(keys, channel.ChannelInfo, keyIndex)
+	if err != nil {
+		return err
+	}
+
+	channel.Key = strings.Join(remainingKeys, "\n")
+	channel.ChannelInfo.MultiKeySize = len(remainingKeys)
+	channel.ChannelInfo.MultiKeyStatusList = newStatusList
+	channel.ChannelInfo.MultiKeyDisabledTime = newDisabledTime
+	channel.ChannelInfo.MultiKeyDisabledReason = newDisabledReason
+	if channel.ChannelInfo.MultiKeyPollingIndex >= len(remainingKeys) {
+		channel.ChannelInfo.MultiKeyPollingIndex = 0
+	}
+
+	return channel.Update()
+}
+
 func (channel *Channel) UpdateResponseTime(responseTime int64) {
 	err := DB.Model(channel).Select("response_time", "test_time").Updates(Channel{
 		TestTime:     common.GetTimestamp(),

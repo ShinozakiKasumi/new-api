@@ -3642,6 +3642,8 @@
     "默认折叠侧边栏": "Réduire la barre latérale par défaut",
     "默认测试模型": "Modèle de test par défaut",
     "默认用户消息": "Bonjour",
-    "默认补全倍率": "Taux de complétion par défaut"
+    "默认补全倍率": "Taux de complétion par défaut",
+    "429 usage limit 自动删除": "Suppression automatique sur usage limit 429",
+    "开启后，Codex 渠道触发 usage limit 429 时会自动删除渠道或当前密钥；默认关闭": "Une fois activé, un canal Codex qui déclenche usage limit 429 supprimera automatiquement le canal ou la clé actuelle. Désactivé par défaut"
   }
 }

@@ -223,6 +223,7 @@ const EditChannelModal = (props) => {
     allow_include_obfuscation: false,
     allow_inference_geo: false,
     allow_speed: false,
+    codex_usage_limit_auto_delete: false,
     claude_beta_query: false,
     upstream_model_update_check_enabled: false,
     upstream_model_update_auto_sync_enabled: false,
@@ -944,6 +945,8 @@ const EditChannelModal = (props) => {
           data.allow_inference_geo =
             parsedSettings.allow_inference_geo || false;
           data.allow_speed = parsedSettings.allow_speed || false;
+          data.codex_usage_limit_auto_delete =
+            parsedSettings.codex_usage_limit_auto_delete === true;
           data.claude_beta_query = parsedSettings.claude_beta_query || false;
           data.upstream_model_update_check_enabled =
             parsedSettings.upstream_model_update_check_enabled === true;
@@ -974,6 +977,7 @@ const EditChannelModal = (props) => {
           data.allow_include_obfuscation = false;
           data.allow_inference_geo = false;
           data.allow_speed = false;
+          data.codex_usage_limit_auto_delete = false;
           data.claude_beta_query = false;
           data.upstream_model_update_check_enabled = false;
           data.upstream_model_update_auto_sync_enabled = false;
@@ -992,6 +996,7 @@ const EditChannelModal = (props) => {
         data.allow_include_obfuscation = false;
         data.allow_inference_geo = false;
         data.allow_speed = false;
+        data.codex_usage_limit_auto_delete = false;
         data.claude_beta_query = false;
         data.upstream_model_update_check_enabled = false;
         data.upstream_model_update_auto_sync_enabled = false;
@@ -1843,6 +1848,13 @@ const EditChannelModal = (props) => {
       }
     }
 
+    if (localInputs.type === 57) {
+      settings.codex_usage_limit_auto_delete =
+        localInputs.codex_usage_limit_auto_delete === true;
+    } else if ('codex_usage_limit_auto_delete' in settings) {
+      delete settings.codex_usage_limit_auto_delete;
+    }
+
     settings.upstream_model_update_check_enabled =
       localInputs.upstream_model_update_check_enabled === true;
     settings.upstream_model_update_auto_sync_enabled =
@@ -1887,6 +1899,7 @@ const EditChannelModal = (props) => {
     delete localInputs.allow_include_obfuscation;
     delete localInputs.allow_inference_geo;
     delete localInputs.allow_speed;
+    delete localInputs.codex_usage_limit_auto_delete;
     delete localInputs.claude_beta_query;
     delete localInputs.upstream_model_update_check_enabled;
     delete localInputs.upstream_model_update_auto_sync_enabled;
@@ -2501,6 +2514,24 @@ const EditChannelModal = (props) => {
                     showClear
                     onChange={(value) => handleInputChange('remark', value)}
                   />
+
+                  {inputs.type === 57 && (
+                    <Form.Switch
+                      field='codex_usage_limit_auto_delete'
+                      label={t('429 usage limit 自动删除')}
+                      checkedText={t('开')}
+                      uncheckedText={t('关')}
+                      onChange={(value) =>
+                        handleChannelOtherSettingsChange(
+                          'codex_usage_limit_auto_delete',
+                          value,
+                        )
+                      }
+                      extraText={t(
+                        '开启后，Codex 渠道触发 usage limit 429 时会自动删除渠道或当前密钥；默认关闭',
+                      )}
+                    />
+                  )}
 
                   <Row gutter={12}>
                     <Col span={12}>

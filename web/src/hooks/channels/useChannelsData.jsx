@@ -56,7 +56,6 @@ export const useChannelsData = () => {
 
   // UI states
   const [showEdit, setShowEdit] = useState(false);
-  const [enableBatchDelete, setEnableBatchDelete] = useState(false);
   const [editingChannel, setEditingChannel] = useState({ id: undefined });
   const [showEditTag, setShowEditTag] = useState(false);
   const [editingTag, setEditingTag] = useState('');
@@ -150,13 +149,9 @@ export const useChannelsData = () => {
       parseInt(localStorage.getItem('page-size')) || ITEMS_PER_PAGE;
     const localEnableTagMode =
       localStorage.getItem('enable-tag-mode') === 'true';
-    const localEnableBatchDelete =
-      localStorage.getItem('enable-batch-delete') === 'true';
-
     setIdSort(localIdSort);
     setPageSize(localPageSize);
     setEnableTagMode(localEnableTagMode);
-    setEnableBatchDelete(localEnableBatchDelete);
 
     loadChannels(1, localPageSize, localIdSort, localEnableTagMode)
       .then()
@@ -668,8 +663,16 @@ export const useChannelsData = () => {
   };
 
   // Batch operations
+  const getSelectedChannelIds = () => {
+    return selectedChannels
+      .filter((channel) => channel.children === undefined)
+      .map((channel) => Number(channel.id))
+      .filter((id) => Number.isInteger(id));
+  };
+
   const batchSetChannelTag = async () => {
-    if (selectedChannels.length === 0) {
+    const ids = getSelectedChannelIds();
+    if (ids.length === 0) {
       showError(t('请先选择要设置标签的渠道！'));
       return;
     }
@@ -677,7 +680,6 @@ export const useChannelsData = () => {
       showError(t('标签不能为空！'));
       return;
     }
-    let ids = selectedChannels.map((channel) => channel.id);
     const res = await API.post('/api/channel/batch/tag', {
       ids: ids,
       tag: batchSetTagValue === '' ? null : batchSetTagValue,
@@ -694,15 +696,12 @@ export const useChannelsData = () => {
   };
 
   const batchDeleteChannels = async () => {
-    if (selectedChannels.length === 0) {
+    const ids = getSelectedChannelIds();
+    if (ids.length === 0) {
       showError(t('请先选择要删除的通道！'));
       return;
     }
     setLoading(true);
-    let ids = [];
-    selectedChannels.forEach((channel) => {
-      ids.push(channel.id);
-    });
     const res = await API.post(`/api/channel/batch`, { ids: ids });
     const { success, message, data } = res.data;
     if (success) {
@@ -1144,7 +1143,6 @@ export const useChannelsData = () => {
     groupOptions,
     idSort,
     enableTagMode,
-    enableBatchDelete,
     statusFilter,
     compactMode,
     globalPassThroughEnabled,
@@ -1249,7 +1247,6 @@ export const useChannelsData = () => {
     // Setters
     setIdSort,
     setEnableTagMode,
-    setEnableBatchDelete,
     setStatusFilter,
     setCompactMode,
     setActivePage,
