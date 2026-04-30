@@ -68,6 +68,23 @@ func clearChannelInfo(channel *model.Channel) {
 	}
 }
 
+func applyCodexProfileToChannel(ctx context.Context, channel *model.Channel) {
+	if channel == nil || channel.Type != constant.ChannelTypeCodex {
+		return
+	}
+	profile, err := service.ResolveCodexChannelProfile(ctx, channel)
+	if err != nil {
+		common.SysLog(fmt.Sprintf("Codex channel #%d profile sync skipped: %s", channel.Id, err.Error()))
+		return
+	}
+	if strings.TrimSpace(profile.Email) != "" {
+		channel.Name = profile.Email
+	}
+	if strings.TrimSpace(profile.EncodedKey) != "" {
+		channel.Key = profile.EncodedKey
+	}
+}
+
 func GetAllChannels(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	channelData := make([]*model.Channel, 0)
@@ -648,6 +665,9 @@ func AddChannel(c *gin.Context) {
 			}
 			localChannel.Name = fmt.Sprintf("%s %s", localChannel.Name, keyPrefix)
 		}
+		if localChannel.Type == constant.ChannelTypeCodex {
+			applyCodexProfileToChannel(c.Request.Context(), localChannel)
+		}
 		channels = append(channels, *localChannel)
 	}
 	err = model.BatchInsertChannels(channels)
@@ -951,6 +971,24 @@ func UpdateChannel(c *gin.Context) {
 			}
 		case "replace":
 			// 覆盖模式：直接使用新密钥（默认行为，不需要特殊处理）
+		}
+	}
+	if channel.Type == constant.ChannelTypeCodex {
+		profileChannel := channel.Channel
+		effectiveKey := strings.TrimSpace(profileChannel.Key)
+		if effectiveKey == "" {
+			profileChannel.Key = originChannel.Key
+		}
+		if profileChannel.BaseURL == nil {
+			profileChannel.BaseURL = originChannel.BaseURL
+		}
+		if profileChannel.Setting == nil {
+			profileChannel.Setting = originChannel.Setting
+		}
+		applyCodexProfileToChannel(c.Request.Context(), &profileChannel)
+		channel.Name = profileChannel.Name
+		if strings.TrimSpace(profileChannel.Key) != "" && (effectiveKey != "" || profileChannel.Key != originChannel.Key) {
+			channel.Key = profileChannel.Key
 		}
 	}
 	err = channel.Update()

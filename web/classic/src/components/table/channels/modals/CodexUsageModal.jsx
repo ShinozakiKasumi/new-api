@@ -33,13 +33,13 @@ import { MOBILE_BREAKPOINT } from '../../../../hooks/common/useIsMobile';
 
 const { Text } = Typography;
 
-const clampPercent = (value) => {
+export const clampPercent = (value) => {
   const v = Number(value);
   if (!Number.isFinite(v)) return 0;
   return Math.max(0, Math.min(100, v));
 };
 
-const pickStrokeColor = (percent) => {
+export const pickStrokeColor = (percent) => {
   const p = clampPercent(percent);
   if (p >= 95) return '#ef4444';
   if (p >= 80) return '#f59e0b';
@@ -63,7 +63,7 @@ const classifyWindowByDuration = (windowData) => {
   return seconds >= 24 * 60 * 60 ? 'weekly' : 'fiveHour';
 };
 
-const resolveRateLimitWindows = (data) => {
+export const resolveRateLimitWindows = (data) => {
   const rateLimit = data?.rate_limit ?? {};
   const primary = rateLimit?.primary_window ?? null;
   const secondary = rateLimit?.secondary_window ?? null;
@@ -110,7 +110,7 @@ const resolveRateLimitWindows = (data) => {
   return { fiveHourWindow, weeklyWindow };
 };
 
-const formatDurationSeconds = (seconds, t) => {
+export const formatDurationSeconds = (seconds, t) => {
   const tt = typeof t === 'function' ? t : (v) => v;
   const s = Number(seconds);
   if (!Number.isFinite(s) || s <= 0) return '-';
@@ -123,7 +123,7 @@ const formatDurationSeconds = (seconds, t) => {
   return `${secs}${tt('秒')}`;
 };
 
-const formatUnixSeconds = (unixSeconds) => {
+export const formatUnixSeconds = (unixSeconds) => {
   const v = Number(unixSeconds);
   if (!Number.isFinite(v) || v <= 0) return '-';
   try {

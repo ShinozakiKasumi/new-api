@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Button,
   Dropdown,
@@ -38,6 +38,7 @@ import {
   showSuccess,
   showError,
   showInfo,
+  API,
 } from '../../../helpers';
 import {
   CHANNEL_OPTIONS,
@@ -50,6 +51,12 @@ import {
   IconAlertTriangle,
 } from '@douyinfe/semi-icons';
 import { FaRandom } from 'react-icons/fa';
+import {
+  clampPercent,
+  formatDurationSeconds,
+  formatUnixSeconds,
+  resolveRateLimitWindows,
+} from './modals/CodexUsageModal';
 
 // Render functions
 const renderType = (type, record = {}, t) => {
@@ -137,6 +144,99 @@ const renderType = (type, record = {}, t) => {
         </span>
       </Tooltip>
     </Space>
+  );
+};
+
+
+const CODEX_CHANNEL_TYPE = 57;
+
+const formatCodexUsagePercent = (windowData) => {
+  if (!windowData || typeof windowData !== 'object') return '-';
+  const percent = clampPercent(windowData?.used_percent ?? 0);
+  return `${Math.round(percent)}%`;
+};
+
+const getCodexUsageColor = (fiveHourWindow, weeklyWindow) => {
+  const maxPercent = Math.max(
+    clampPercent(fiveHourWindow?.used_percent ?? 0),
+    clampPercent(weeklyWindow?.used_percent ?? 0),
+  );
+  if (maxPercent >= 95) return 'red';
+  if (maxPercent >= 80) return 'orange';
+  return 'blue';
+};
+
+const CodexUsageInlineTag = ({ record, t }) => {
+  const [state, setState] = useState({ loading: true, payload: null });
+  const recordId = record?.id;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!recordId || record?.type !== CODEX_CHANNEL_TYPE || record.children !== undefined) {
+      setState({ loading: false, payload: null });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setState({ loading: true, payload: null });
+    API.get(`/api/channel/${recordId}/codex/usage`, { skipErrorHandler: true })
+      .then((res) => {
+        if (cancelled) return;
+        setState({ loading: false, payload: res?.data ?? null });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setState({ loading: false, payload: { success: false } });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [recordId, record?.type, record?.children]);
+
+  if (record?.type !== CODEX_CHANNEL_TYPE || record.children !== undefined) {
+    return null;
+  }
+  if (state.loading) {
+    return (
+      <Tag color='grey' type='light' size='small' shape='circle'>
+        {t('Codex 用量加载中')}
+      </Tag>
+    );
+  }
+  if (!state.payload?.success) {
+    return (
+      <Tag color='grey' type='light' size='small' shape='circle'>
+        {t('Codex 用量未知')}
+      </Tag>
+    );
+  }
+
+  const data = state.payload?.data ?? null;
+  const { fiveHourWindow, weeklyWindow } = resolveRateLimitWindows(data);
+  const color = getCodexUsageColor(fiveHourWindow, weeklyWindow);
+  const tooltip = (
+    <div className='space-y-1 text-xs'>
+      <div>
+        {t('5小时窗口')}：{formatCodexUsagePercent(fiveHourWindow)}，{t('重置时间：')}
+        {formatUnixSeconds(fiveHourWindow?.reset_at)}，{t('距离重置：')}
+        {formatDurationSeconds(fiveHourWindow?.reset_after_seconds, t)}
+      </div>
+      <div>
+        {t('每周窗口')}：{formatCodexUsagePercent(weeklyWindow)}，{t('重置时间：')}
+        {formatUnixSeconds(weeklyWindow?.reset_at)}，{t('距离重置：')}
+        {formatDurationSeconds(weeklyWindow?.reset_after_seconds, t)}
+      </div>
+    </div>
+  );
+
+  return (
+    <Tooltip content={tooltip} trigger='hover' position='topLeft'>
+      <Tag color={color} type='light' size='small' shape='circle'>
+        5h {formatCodexUsagePercent(fiveHourWindow)} / W {formatCodexUsagePercent(weeklyWindow)}
+      </Tag>
+    </Tooltip>
   );
 };
 
@@ -383,13 +483,16 @@ export const getChannelsColumns = ({
             <span>{text}</span>
           );
 
-        if (!passThroughEnabled && !showUpstreamUpdateTag) {
+        const codexUsageNode = <CodexUsageInlineTag record={record} t={t} />;
+
+        if (!passThroughEnabled && !showUpstreamUpdateTag && record?.type !== CODEX_CHANNEL_TYPE) {
           return nameNode;
         }
 
         return (
-          <Space spacing={6} align='center'>
+          <Space spacing={6} align='center' wrap>
             {nameNode}
+            {codexUsageNode}
             {passThroughEnabled && (
               <Tooltip
                 content={t(
