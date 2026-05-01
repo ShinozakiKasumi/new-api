@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/cachex"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -41,19 +43,21 @@ var (
 )
 
 type channelAffinityMeta struct {
-	CacheKey       string
-	TTLSeconds     int
-	RuleName       string
-	SkipRetry      bool
-	ParamTemplate  map[string]interface{}
-	KeySourceType  string
-	KeySourceKey   string
-	KeySourcePath  string
-	KeyHint        string
-	KeyFingerprint string
-	UsingGroup     string
-	ModelName      string
-	RequestPath    string
+	CacheKey            string
+	TTLSeconds          int
+	RuleName            string
+	SkipRetry           bool
+	ParamTemplate       map[string]interface{}
+	KeyValue            string
+	KeySourceType       string
+	KeySourceKey        string
+	KeySourcePath       string
+	KeySourceNestedPath string
+	KeyHint             string
+	KeyFingerprint      string
+	UsingGroup          string
+	ModelName           string
+	RequestPath         string
 }
 
 type ChannelAffinityStatsContext struct {
@@ -62,6 +66,14 @@ type ChannelAffinityStatsContext struct {
 	KeyFingerprint string
 	TTLSeconds     int64
 }
+
+type channelAffinityFailureReason string
+
+const (
+	channelAffinityFailureReasonUnknown              channelAffinityFailureReason = "unknown"
+	channelAffinityFailureReasonDisabledChannel      channelAffinityFailureReason = "disabled_channel"
+	channelAffinityFailureReasonChannelQuotaExceeded channelAffinityFailureReason = "channel_quota_exceeded"
+)
 
 const (
 	cacheTokenRateModeCachedOverPrompt           = "cached_over_prompt"
@@ -330,7 +342,26 @@ func matchAnyIncludeFold(patterns []string, s string) bool {
 	return false
 }
 
+func extractNestedChannelAffinityValue(rawValue string, nestedPath string) string {
+	rawValue = strings.TrimSpace(rawValue)
+	nestedPath = strings.TrimSpace(nestedPath)
+	if rawValue == "" || nestedPath == "" || !gjson.Valid(rawValue) {
+		return ""
+	}
+	res := gjson.Get(rawValue, nestedPath)
+	if !res.Exists() {
+		return ""
+	}
+	switch res.Type {
+	case gjson.String, gjson.Number, gjson.True, gjson.False:
+		return strings.TrimSpace(res.String())
+	default:
+		return strings.TrimSpace(res.Raw)
+	}
+}
+
 func extractChannelAffinityValue(c *gin.Context, src operation_setting.ChannelAffinityKeySource) string {
+	nestedPath := strings.TrimSpace(src.NestedPath)
 	switch src.Type {
 	case "context_int":
 		if src.Key == "" {
@@ -340,12 +371,29 @@ func extractChannelAffinityValue(c *gin.Context, src operation_setting.ChannelAf
 		if v <= 0 {
 			return ""
 		}
-		return strconv.Itoa(v)
+		value := strconv.Itoa(v)
+		if nestedPath != "" {
+			return extractNestedChannelAffinityValue(value, nestedPath)
+		}
+		return value
 	case "context_string":
 		if src.Key == "" {
 			return ""
 		}
-		return strings.TrimSpace(c.GetString(src.Key))
+		value := strings.TrimSpace(c.GetString(src.Key))
+		if nestedPath != "" {
+			return extractNestedChannelAffinityValue(value, nestedPath)
+		}
+		return value
+	case "request_header":
+		if c == nil || c.Request == nil || strings.TrimSpace(src.Key) == "" {
+			return ""
+		}
+		value := strings.TrimSpace(c.Request.Header.Get(src.Key))
+		if nestedPath != "" {
+			return extractNestedChannelAffinityValue(value, nestedPath)
+		}
+		return value
 	case "gjson":
 		if src.Path == "" {
 			return ""
@@ -361,6 +409,16 @@ func extractChannelAffinityValue(c *gin.Context, src operation_setting.ChannelAf
 		res := gjson.GetBytes(body, src.Path)
 		if !res.Exists() {
 			return ""
+		}
+		if nestedPath != "" {
+			switch res.Type {
+			case gjson.String:
+				return extractNestedChannelAffinityValue(res.String(), nestedPath)
+			case gjson.JSON:
+				return extractNestedChannelAffinityValue(res.Raw, nestedPath)
+			default:
+				return ""
+			}
 		}
 		switch res.Type {
 		case gjson.String, gjson.Number, gjson.True, gjson.False:
@@ -392,6 +450,9 @@ func setChannelAffinityContext(c *gin.Context, meta channelAffinityMeta) {
 	c.Set(ginKeyChannelAffinityCacheKey, meta.CacheKey)
 	c.Set(ginKeyChannelAffinityTTLSeconds, meta.TTLSeconds)
 	c.Set(ginKeyChannelAffinityMeta, meta)
+	if overrideCtx := buildChannelAffinityParamOverrideContext(meta); len(overrideCtx) > 0 {
+		common.SetContextKey(c, constant.ContextKeyChannelParamOverrideContext, overrideCtx)
+	}
 }
 
 func getChannelAffinityContext(c *gin.Context) (string, int, bool) {
@@ -562,10 +623,32 @@ func appendChannelAffinityTemplateAdminInfo(c *gin.Context, meta channelAffinity
 		"key_source":        meta.KeySourceType,
 		"key_key":           meta.KeySourceKey,
 		"key_path":          meta.KeySourcePath,
+		"key_nested_path":   meta.KeySourceNestedPath,
 		"key_hint":          meta.KeyHint,
 		"key_fp":            meta.KeyFingerprint,
 		"override_template": templateInfo,
 	})
+}
+
+func buildChannelAffinityParamOverrideContext(meta channelAffinityMeta) map[string]interface{} {
+	if strings.TrimSpace(meta.KeyValue) == "" {
+		return nil
+	}
+	return map[string]interface{}{
+		"channel_affinity": map[string]interface{}{
+			"key":                    meta.KeyValue,
+			"rule_name":              meta.RuleName,
+			"key_source_type":        meta.KeySourceType,
+			"key_source_key":         meta.KeySourceKey,
+			"key_source_path":        meta.KeySourcePath,
+			"key_source_nested_path": meta.KeySourceNestedPath,
+			"key_hint":               meta.KeyHint,
+			"key_fingerprint":        meta.KeyFingerprint,
+			"using_group":            meta.UsingGroup,
+			"model":                  meta.ModelName,
+			"request_path":           meta.RequestPath,
+		},
+	}
 }
 
 // ApplyChannelAffinityOverrideTemplate merges per-rule channel override templates onto the selected channel override config.
@@ -633,19 +716,21 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 		cacheKeySuffix := buildChannelAffinityCacheKeySuffix(rule, modelName, usingGroup, affinityValue)
 		cacheKeyFull := channelAffinityCacheNamespace + ":" + cacheKeySuffix
 		setChannelAffinityContext(c, channelAffinityMeta{
-			CacheKey:       cacheKeyFull,
-			TTLSeconds:     ttlSeconds,
-			RuleName:       rule.Name,
-			SkipRetry:      rule.SkipRetryOnFailure,
-			ParamTemplate:  cloneStringAnyMap(rule.ParamOverrideTemplate),
-			KeySourceType:  strings.TrimSpace(usedSource.Type),
-			KeySourceKey:   strings.TrimSpace(usedSource.Key),
-			KeySourcePath:  strings.TrimSpace(usedSource.Path),
-			KeyHint:        buildChannelAffinityKeyHint(affinityValue),
-			KeyFingerprint: affinityFingerprint(affinityValue),
-			UsingGroup:     usingGroup,
-			ModelName:      modelName,
-			RequestPath:    path,
+			CacheKey:            cacheKeyFull,
+			TTLSeconds:          ttlSeconds,
+			RuleName:            rule.Name,
+			SkipRetry:           rule.SkipRetryOnFailure,
+			ParamTemplate:       cloneStringAnyMap(rule.ParamOverrideTemplate),
+			KeyValue:            affinityValue,
+			KeySourceType:       strings.TrimSpace(usedSource.Type),
+			KeySourceKey:        strings.TrimSpace(usedSource.Key),
+			KeySourcePath:       strings.TrimSpace(usedSource.Path),
+			KeySourceNestedPath: strings.TrimSpace(usedSource.NestedPath),
+			KeyHint:             buildChannelAffinityKeyHint(affinityValue),
+			KeyFingerprint:      affinityFingerprint(affinityValue),
+			UsingGroup:          usingGroup,
+			ModelName:           modelName,
+			RequestPath:         path,
 		})
 
 		cache := getChannelAffinityCache()
@@ -655,6 +740,10 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 			return 0, false
 		}
 		if found {
+			if setting.InvalidateStaleCacheEnabled && !isChannelAffinityTargetUsable(c, channelID, modelName, usingGroup) {
+				invalidateChannelAffinityCacheEntry(cacheKeyFull)
+				return 0, false
+			}
 			return channelID, true
 		}
 		return 0, false
@@ -662,7 +751,48 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 	return 0, false
 }
 
+func invalidateChannelAffinityCacheEntry(cacheKey string) {
+	cacheKey = strings.TrimSpace(cacheKey)
+	if cacheKey == "" {
+		return
+	}
+	cache := getChannelAffinityCache()
+	if _, err := cache.DeleteMany([]string{cacheKey}); err != nil {
+		common.SysError(fmt.Sprintf("channel affinity cache delete failed: key=%s, err=%v", cacheKey, err))
+	}
+}
+
+func isChannelAffinityTargetUsable(c *gin.Context, channelID int, modelName string, usingGroup string) bool {
+	if channelID <= 0 {
+		return false
+	}
+	channel, err := model.CacheGetChannel(channelID)
+	if err != nil || channel == nil {
+		return false
+	}
+	if channel.Status != common.ChannelStatusEnabled {
+		return false
+	}
+	if usingGroup == "auto" {
+		userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+		return model.IsChannelEnabledForAnyGroupModel(GetUserAutoGroup(userGroup), modelName, channelID)
+	}
+	return model.IsChannelEnabledForGroupModel(usingGroup, modelName, channelID)
+}
+
 func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
+	return shouldSkipRetryAfterChannelAffinityFailureWithReason(c, channelAffinityFailureReasonUnknown)
+}
+
+func ShouldSkipRetryAfterChannelAffinityDisabledChannel(c *gin.Context) bool {
+	return shouldSkipRetryAfterChannelAffinityFailureWithReason(c, channelAffinityFailureReasonDisabledChannel)
+}
+
+func ShouldSkipRetryAfterChannelAffinityError(c *gin.Context, err *types.NewAPIError) bool {
+	return shouldSkipRetryAfterChannelAffinityFailureWithReason(c, classifyChannelAffinityFailureReason(err))
+}
+
+func shouldSkipRetryAfterChannelAffinityFailureWithReason(c *gin.Context, reason channelAffinityFailureReason) bool {
 	if c == nil {
 		return false
 	}
@@ -677,7 +807,83 @@ func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
 	if !ok {
 		return false
 	}
-	return meta.SkipRetry
+	if !meta.SkipRetry {
+		return false
+	}
+	setting := operation_setting.GetChannelAffinitySetting()
+	if setting == nil {
+		return true
+	}
+	switch reason {
+	case channelAffinityFailureReasonDisabledChannel:
+		if setting.RetryOnDisabledChannel {
+			return false
+		}
+	case channelAffinityFailureReasonChannelQuotaExceeded:
+		if setting.RetryOnChannelQuotaExceeded {
+			return false
+		}
+	}
+	return true
+}
+
+func classifyChannelAffinityFailureReason(err *types.NewAPIError) channelAffinityFailureReason {
+	if isChannelAffinityDisabledChannelError(err) {
+		return channelAffinityFailureReasonDisabledChannel
+	}
+	if isChannelAffinityChannelQuotaExceededError(err) {
+		return channelAffinityFailureReasonChannelQuotaExceeded
+	}
+	return channelAffinityFailureReasonUnknown
+}
+
+func isChannelAffinityDisabledChannelError(err *types.NewAPIError) bool {
+	if err == nil {
+		return false
+	}
+	oaiErr := err.ToOpenAIError()
+	code := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", oaiErr.Code)))
+	errType := strings.ToLower(strings.TrimSpace(oaiErr.Type))
+	msg := strings.ToLower(strings.TrimSpace(oaiErr.Message))
+
+	if strings.Contains(code, "channel_disabled") || strings.Contains(code, "task_channel_disable") {
+		return true
+	}
+
+	switch errType {
+	case "channel_disabled":
+		return true
+	}
+
+	return strings.Contains(msg, "该渠道已被禁用") ||
+		strings.Contains(msg, "渠道已被禁用") ||
+		strings.Contains(msg, "the channel of the origin task is disabled") ||
+		strings.Contains(msg, "channel is disabled") ||
+		strings.Contains(msg, "disabled channel")
+}
+
+func isChannelAffinityChannelQuotaExceededError(err *types.NewAPIError) bool {
+	if err == nil {
+		return false
+	}
+	oaiErr := err.ToOpenAIError()
+	code := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", oaiErr.Code)))
+	errType := strings.ToLower(strings.TrimSpace(oaiErr.Type))
+	msg := strings.ToLower(strings.TrimSpace(oaiErr.Message))
+
+	switch code {
+	case "billing_not_active", "arrearage", "account_deactivated":
+		return true
+	}
+	switch errType {
+	case "insufficient_quota":
+		return true
+	}
+	return strings.Contains(msg, "insufficient quota") ||
+		strings.Contains(msg, "quota exceeded") ||
+		strings.Contains(msg, "usage limit") ||
+		strings.Contains(msg, "额度不足") ||
+		strings.Contains(msg, "余额不足")
 }
 
 func MarkChannelAffinityUsed(c *gin.Context, selectedGroup string, channelID int) {

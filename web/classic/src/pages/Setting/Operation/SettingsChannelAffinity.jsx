@@ -62,6 +62,12 @@ import ParamOverrideEditorModal from '../../../components/table/channels/modals/
 
 const KEY_ENABLED = 'channel_affinity_setting.enabled';
 const KEY_SWITCH_ON_SUCCESS = 'channel_affinity_setting.switch_on_success';
+const KEY_INVALIDATE_STALE_CACHE =
+  'channel_affinity_setting.invalidate_stale_cache_enabled';
+const KEY_RETRY_ON_DISABLED_CHANNEL =
+  'channel_affinity_setting.retry_on_disabled_channel';
+const KEY_RETRY_ON_CHANNEL_QUOTA_EXCEEDED =
+  'channel_affinity_setting.retry_on_channel_quota_exceeded';
 const KEY_MAX_ENTRIES = 'channel_affinity_setting.max_entries';
 const KEY_DEFAULT_TTL = 'channel_affinity_setting.default_ttl_seconds';
 const KEY_RULES = 'channel_affinity_setting.rules';
@@ -69,6 +75,7 @@ const KEY_RULES = 'channel_affinity_setting.rules';
 const KEY_SOURCE_TYPES = [
   { label: 'context_int', value: 'context_int' },
   { label: 'context_string', value: 'context_string' },
+  { label: 'request_header', value: 'request_header' },
   { label: 'gjson', value: 'gjson' },
 ];
 
@@ -91,7 +98,9 @@ const RULES_JSON_PLACEHOLDER = `[
     "path_regex": ["/v1/chat/completions"],
     "user_agent_include": ["curl", "PostmanRuntime"],
     "key_sources": [
+      { "type": "request_header", "key": "X-Session-Id" },
       { "type": "gjson", "path": "metadata.conversation_id" },
+      { "type": "gjson", "path": "metadata.user_id", "nested_path": "session_id" },
       { "type": "context_string", "key": "conversation_id" }
     ],
     "value_regex": "^[-0-9A-Za-z._:]{1,128}$",
@@ -144,12 +153,13 @@ const normalizeKeySource = (src) => {
   const type = (src?.type || '').trim();
   const key = (src?.key || '').trim();
   const path = (src?.path || '').trim();
+  const nestedPath = (src?.nested_path || src?.nestedPath || '').trim();
 
   if (type === 'gjson') {
-    return { type, key: '', path };
+    return { type, key: '', path, nested_path: nestedPath };
   }
 
-  return { type, key, path: '' };
+  return { type, key, path: '', nested_path: nestedPath };
 };
 
 const makeUniqueName = (existingNames, baseName) => {
@@ -240,6 +250,9 @@ export default function SettingsChannelAffinity(props) {
   const [inputs, setInputs] = useState({
     [KEY_ENABLED]: false,
     [KEY_SWITCH_ON_SUCCESS]: true,
+    [KEY_INVALIDATE_STALE_CACHE]: true,
+    [KEY_RETRY_ON_DISABLED_CHANNEL]: true,
+    [KEY_RETRY_ON_CHANNEL_QUOTA_EXCEEDED]: true,
     [KEY_MAX_ENTRIES]: 100000,
     [KEY_DEFAULT_TTL]: 3600,
     [KEY_RULES]: '[]',
@@ -555,7 +568,12 @@ export default function SettingsChannelAffinity(props) {
         if (xs.length === 0) return '-';
         return xs.slice(0, 3).map((src, idx) => {
           const s = normalizeKeySource(src);
-          const detail = s.type === 'gjson' ? s.path : s.key;
+          const detail =
+            s.type === 'gjson'
+              ? s.nested_path
+                ? `${s.path} -> ${s.nested_path}`
+                : s.path
+              : s.key;
           return (
             <Tag key={`${s.type}-${idx}`} style={{ marginRight: 4 }}>
               {s.type}:{detail}
@@ -659,7 +677,11 @@ export default function SettingsChannelAffinity(props) {
     const xs = (keySources || []).map(normalizeKeySource).filter((x) => x.type);
     if (xs.length === 0) return { ok: false, message: 'Key 来源不能为空' };
     for (const x of xs) {
-      if (x.type === 'context_int' || x.type === 'context_string') {
+      if (
+        x.type === 'context_int' ||
+        x.type === 'context_string' ||
+        x.type === 'request_header'
+      ) {
         if (!x.key) return { ok: false, message: 'Key 不能为空' };
       } else if (x.type === 'gjson') {
         if (!x.path) return { ok: false, message: 'Path 不能为空' };
@@ -853,6 +875,9 @@ export default function SettingsChannelAffinity(props) {
         ![
           KEY_ENABLED,
           KEY_SWITCH_ON_SUCCESS,
+          KEY_INVALIDATE_STALE_CACHE,
+          KEY_RETRY_ON_DISABLED_CHANNEL,
+          KEY_RETRY_ON_CHANNEL_QUOTA_EXCEEDED,
           KEY_MAX_ENTRIES,
           KEY_DEFAULT_TTL,
           KEY_RULES,
@@ -862,6 +887,12 @@ export default function SettingsChannelAffinity(props) {
       if (key === KEY_ENABLED)
         currentInputs[key] = toBoolean(props.options[key]);
       else if (key === KEY_SWITCH_ON_SUCCESS)
+        currentInputs[key] = toBoolean(props.options[key]);
+      else if (key === KEY_INVALIDATE_STALE_CACHE)
+        currentInputs[key] = toBoolean(props.options[key]);
+      else if (key === KEY_RETRY_ON_DISABLED_CHANNEL)
+        currentInputs[key] = toBoolean(props.options[key]);
+      else if (key === KEY_RETRY_ON_CHANNEL_QUOTA_EXCEEDED)
         currentInputs[key] = toBoolean(props.options[key]);
       else if (key === KEY_MAX_ENTRIES)
         currentInputs[key] = Number(props.options[key] || 0) || 0;
@@ -995,6 +1026,66 @@ export default function SettingsChannelAffinity(props) {
                 <Text type='tertiary' size='small'>
                   {t(
                     '如果亲和到的渠道失败，重试到其他渠道成功后，将亲和更新到成功的渠道。',
+                  )}
+                </Text>
+              </Col>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.Switch
+                  field={KEY_INVALIDATE_STALE_CACHE}
+                  label={t('自动淘汰失效亲和缓存')}
+                  checkedText='|'
+                  uncheckedText='O'
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      [KEY_INVALIDATE_STALE_CACHE]: value,
+                    })
+                  }
+                />
+                <Text type='tertiary' size='small'>
+                  {t(
+                    '命中已禁用或已不再匹配当前分组/模型的渠道时，自动删除该亲和缓存并回退到正常选路。',
+                  )}
+                </Text>
+              </Col>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.Switch
+                  field={KEY_RETRY_ON_DISABLED_CHANNEL}
+                  label={t('禁用渠道时允许切换')}
+                  checkedText='|'
+                  uncheckedText='O'
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      [KEY_RETRY_ON_DISABLED_CHANNEL]: value,
+                    })
+                  }
+                />
+                <Text type='tertiary' size='small'>
+                  {t(
+                    '当亲和命中的渠道已被禁用时，即使规则设置为失败不重试，也允许回退到其他可用渠道。',
+                  )}
+                </Text>
+              </Col>
+            </Row>
+
+            <Row gutter={16} style={{ marginTop: 12 }}>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.Switch
+                  field={KEY_RETRY_ON_CHANNEL_QUOTA_EXCEEDED}
+                  label={t('额度耗尽时允许切换')}
+                  checkedText='|'
+                  uncheckedText='O'
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      [KEY_RETRY_ON_CHANNEL_QUOTA_EXCEEDED]: value,
+                    })
+                  }
+                />
+                <Text type='tertiary' size='small'>
+                  {t(
+                    '当亲和命中的渠道返回上游额度不足、欠费或账单未激活等错误时，允许切换到其他可用渠道。',
                   )}
                 </Text>
               </Col>
@@ -1316,7 +1407,7 @@ export default function SettingsChannelAffinity(props) {
           </Space>
           <Text type='tertiary' size='small'>
             {t(
-              'context_int/context_string 从请求上下文读取；gjson 从入口请求的 JSON body 按 gjson path 读取。',
+              'context_int/context_string 从请求上下文读取；request_header 从入口请求头读取；gjson 从入口请求的 JSON body 按 gjson path 读取，可选继续用内层 JSON Path 提取子字段。',
             )}
           </Text>
           <div style={{ marginTop: 8, marginBottom: 8 }}>
@@ -1358,7 +1449,11 @@ export default function SettingsChannelAffinity(props) {
                   return (
                     <Input
                       placeholder={
-                        isGjson ? 'metadata.conversation_id' : 'user_id'
+                        isGjson
+                          ? 'metadata.conversation_id'
+                          : src.type === 'request_header'
+                            ? 'X-Request-Id'
+                            : 'user_id'
                       }
                       aria-label={t('Key 或 Path')}
                       value={isGjson ? src.path : src.key}
@@ -1367,6 +1462,25 @@ export default function SettingsChannelAffinity(props) {
                           idx,
                           isGjson ? { path: value } : { key: value },
                         )
+                      }
+                    />
+                  );
+                },
+              },
+              {
+                title: t('内层 JSON Path'),
+                render: (_, __, idx) => {
+                  const src = normalizeKeySource(
+                    editingRule?.key_sources?.[idx],
+                  );
+                  return (
+                    <Input
+                      disabled={src.type !== 'gjson'}
+                      placeholder='session_id'
+                      aria-label={t('内层 JSON Path')}
+                      value={src.nested_path || ''}
+                      onChange={(value) =>
+                        updateKeySource(idx, { nested_path: value })
                       }
                     />
                   );
