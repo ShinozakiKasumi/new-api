@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
 	openaichannel "github.com/QuantumNous/new-api/relay/channel/openai"
@@ -24,6 +25,13 @@ func claudeViaResponses(c *gin.Context, info *relaycommon.RelayInfo, adaptor cha
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}
+
+	// Codex channel requires stream=true; force it regardless of client setting
+	if info.ChannelType == constant.ChannelTypeCodex {
+		responsesReq.Stream = common.GetPointer(true)
+		info.IsStream = true
+	}
+
 	info.AppendRequestConversion(types.RelayFormatOpenAIResponses)
 
 	// Save and override relay mode to Responses
